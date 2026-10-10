@@ -1,0 +1,43 @@
+[package]
+name = "artcraft-launcher"
+description = "ArtCraft Launcher: install, update and open the Craft App Suite"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+default-run = "artcraft-launcher"
+build = "build.rs"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+artcraft-launcher-core = { workspace = true }
+artcraft-launcher-ui-egui = { workspace = true }
+artcraft-launcher-native = { workspace = true }
+eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11", "persistence", "links"] }
+egui = { workspace = true }
+log = { workspace = true }
+env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+notify-rust = "4"
+
+# The tray (menu bar) icon. On Linux and the BSDs the StatusNotifierItem backend talks D-Bus
+# directly, so no GTK or libappindicator is needed.
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+tray-icon = "0.25"
+
+# macOS only: which desktop (Space) the window shows on (spaces.rs). Safe AppKit calls only, and
+# already in Cargo.lock through winit and tray-icon; pinned exactly to those versions.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "=0.6.5"
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSEnumerator"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSWindow"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))'.dependencies]
+tray-icon = { version = "0.25", default-features = false, features = ["ksni"] }
+
+[build-dependencies]
+# Icon + VERSIONINFO for artcraft-launcher.exe; build.rs only uses it when targeting Windows.
+winresource = "0.1"
