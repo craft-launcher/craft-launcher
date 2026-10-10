@@ -1,0 +1,183 @@
+//! How the UI talks to a backend: the desktop backend installs apps; the web backend can only
+//! look up releases and hand out download links.
+//!
+//! The UI sends [`Command`]s and drains [`Event`]s once per frame, so backends do their work on
+//! threads (desktop) or futures (web) and never block a frame.
+
+use serde::{Deserialize, Serialize};
+
+use crate::platform::{PackageKind, Platform};
+use crate::release::Release;
+use crate::status::Installed;
+
+/// Asks the backend to do something. Results arrive later as [`Event`]s.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Command {
+    /// Look up the latest releases. `force` skips the freshness window (the user pressed Refresh).
+    CheckForUpdates {
+        force: bool,
+    },
+    /// Look again at what's installed.
+    Detect,
+    /// Install or update an app to its latest release.
+    Install {
+        app: String,
+    },
+    Uninstall {
+        app: String,
+    },
+    Launch {
+        app: String,
+    },
+    /// Show the installed app in the file manager.
+    Reveal {
+        app: String,
+    },
+    /// Pause a running download, keeping what's downloaded so far (`Install` resumes it).
+    Pause {
+        app: String,
+    },
+    /// Stop a running download, or throw away a paused one.
+    Cancel {
+        app: String,
+    },
+    /// Download the newer ArtCraft Launcher, put it in place and restart into it.
+    UpdateLauncher,
+    /// Change how the backend behaves.
+    Configure(BackendOptions),
+}
+
+/// Settings the backend needs.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackendOptions {
+    /// Package formats to install, best first (empty: the platform default).
+    pub kinds: Vec<PackageKind>,
+    /// Offer pre-releases (`0.6.0-rc.1`) as updates.
+    pub prereleases: bool,
+}
+
+/// The answer to "what's the latest release of this app?".
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LatestRelease {
+    Found(Release),
+    /// The repo exists but has no published release.
+    None,
+    /// Couldn't find out (offline, rate-limited, unreadable answer).
+    Failed(String),
+}
+
+/// What a running job is doing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JobPhase {
+    Downloading {
+        done: u64,
+        total: u64,
+    },
+    /// The connection dropped; trying again shortly, from where it stopped.
+    Reconnecting {
+        done: u64,
+        total: u64,
+    },
+    Verifying,
+    /// Waiting on the OS installer (MSI) or copying files.
+    Installing,
+    Removing,
+}
+
+/// A partly downloaded file waiting to be resumed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PausedDownload {
+    pub done: u64,
+    /// 0 when unknown.
+    pub total: u64,
+}
+
+/// The `JobFinished` error a paused job ends with (not a failure).
+pub const PAUSED: &str = "paused";
+/// The `JobFinished` error a cancelled job ends with (not a failure).
+pub const CANCELLED: &str = "cancelled";
+
+/// Where release information came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Source {
+    /// The GitHub REST API.
+    GitHubApi,
+    /// github.com release pages (no API quota; used when the API is rate-limited).
+    GitHubPages,
+    /// Saved answers from an earlier check.
+    Cache,
+}
+
+impl Source {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::GitHubApi => "GitHub",
+            Self::GitHubPages => "GitHub (release pages)",
+            Self::Cache => "saved results",
+        }
+    }
+}
+
+/// Something the backend wants the UI to know.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Event {
+    Latest {
+        app: String,
+        latest: LatestRelease,
+    },
+    /// The latest ArtCraft Launcher release, when it's newer than this one.
+    LauncherUpdate(Release),
+    /// The new launcher is in place (or will be, once this one exits): quit now so it can start.
+    LauncherRestarting,
+    Detected {
+        app: String,
+        installed: Option<Installed>,
+    },
+    Progress {
+        app: String,
+        phase: JobPhase,
+    },
+    /// A download is paused (by the user, by a lost connection, or left over from an earlier
+    /// run) and can be resumed; `None` once there's no paused download.
+    Paused {
+        app: String,
+        download: Option<PausedDownload>,
+    },
+    /// A job ended: `Ok` carries a short success message, `Err` what went wrong.
+    JobFinished {
+        app: String,
+        result: Result<String, String>,
+    },
+    CheckStarted,
+    CheckFinished {
+        /// Unix seconds.
+        at: i64,
+        source: Source,
+        /// GitHub refused more API calls until this time (Unix seconds).
+        rate_limited_until: Option<i64>,
+    },
+}
+
+/// What a backend can do on this platform.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Capabilities {
+    /// Install, update, remove and launch apps (desktop). Without it the UI offers downloads.
+    pub manage_apps: bool,
+    /// What "show in file manager" is called here (`Show in Finder`).
+    pub reveal_label: &'static str,
+    /// The launcher can update itself in place and restart (an installed build, not a dev build or
+    /// a Flatpak). Without it the UI offers the download instead.
+    pub self_update: bool,
+}
+
+/// The UI's view of a backend.
+pub trait Backend {
+    fn send(&mut self, command: Command);
+    /// Events since the last call, oldest first.
+    fn poll(&mut self) -> Vec<Event>;
+    fn capabilities(&self) -> Capabilities;
+    /// The machine apps would be installed on (on the web: the visitor's, best guess).
+    fn platform(&self) -> Option<Platform>;
+    /// Unix seconds now.
+    fn now(&self) -> i64;
+}

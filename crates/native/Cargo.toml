@@ -1,0 +1,37 @@
+[package]
+name = "artcraft-launcher-native"
+description = "ArtCraft Launcher desktop backend: release lookups, detecting installed Craft Apps, installing and updating them"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+artcraft-launcher-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+dirs = "6"
+sha2 = "0.10"
+# HTTPS over rustls with the OS's trusted roots, like PdfCraft's update check (webpki-roots and
+# webpki-root-certs are CDLA-licensed, so no bundled root list).
+ureq = { version = "3.4", default-features = false, features = ["rustls-no-provider", "_ring", "gzip"] }
+rustls-native-certs = "0.8"
+
+[target.'cfg(unix)'.dependencies]
+flate2 = "1"
+tar = { version = "0.4", default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+plist = "1"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winreg = "0.55"
+
+
+[dev-dependencies]
+tempfile = "3"
